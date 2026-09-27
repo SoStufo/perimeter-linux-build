@@ -1,0 +1,84 @@
+name: Perimeter Linux Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Perimeter branch or tag:'
+        required: true
+        default: 'main'
+        type: string
+
+env:
+  GH_CACHE_KEY: 4
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [
+          {name: "Release", build_type: Release, arch: x86_64, os: ubuntu-24.04, upload: true,  cmake: ""},
+          {name: "Debug",   build_type: Debug,   arch: x86_64, os: ubuntu-24.04, upload: true,  cmake: ""},
+        ]
+    name: ${{matrix.env.name}} ${{matrix.env.arch}}
+    if: github.event.pull_request.draft != true
+    runs-on: ${{matrix.env.os}}
+    container:
+      image: "debian:buster"
+    steps:
+      - name: Checkout Perimeter at ${{ github.event.inputs.ref }}
+        uses: actions/checkout@v7
+        with:
+          repository: KD-lab-Open-Source/Perimeter
+          ref: ${{ github.event.inputs.ref }}
+
+      - uses: actions/cache@v6
+        id: cache
+        with:
+          path: |
+            /opt/src
+            /opt/out
+          key: Linux-${{matrix.env.arch}}-${{ env.GH_CACHE_KEY }}
+
+      - name: prepare env
+        run: |
+          chmod a+x ./docker/linux/prepare_pkgs
+          ./docker/linux/prepare_pkgs
+
+      - name: prepare boost
+        run: |
+          chmod a+x ./docker/prepare_boost
+          ./docker/prepare_boost
+
+      - name: build ffmpeg
+        run: |
+          chmod a+x ./docker/linux/prepare_ffmpeg
+          ./docker/linux/prepare_ffmpeg
+        if: steps.cache.outputs.cache-hit != 'true'
+
+      - name: build sdl2
+        run: |
+          chmod a+x ./docker/linux/prepare_sdl_pkgs
+          chmod a+x ./docker/linux/prepare_sdl
+          ./docker/linux/prepare_sdl_pkgs
+          ./docker/linux/prepare_sdl
+        if: steps.cache.outputs.cache-hit != 'true'
+
+      - name: Scripts check
+        run: export CUSTOM_TARGET="ScriptsCheck"
+        if: matrix.env.name == 'Scripts Check'
+
+      - name: build
+        run: |
+          chmod a+x ./docker/linux/builder
+          export LIBS_ROOT=/opt/out
+          ./docker/linux/builder \
+            -DCMAKE_BUILD_TYPE=${{matrix.env.build_type}} \
+            ${{matrix.env.cmake}}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Perimeter ${{matrix.env.name}} ${{matrix.env.arch}} tag_${{ github.event.inputs.ref }}
+          path: ./build/docker-linux/output/Perimeter.tar
+        if: matrix.env.upload
